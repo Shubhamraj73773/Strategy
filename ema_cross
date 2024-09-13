@@ -1,0 +1,144 @@
+import numpy as np
+import pandas as pd
+
+# Initialize columns
+df['Signal'] = 0
+df['Entry'] = np.nan
+df['Exit'] = np.nan
+df['Stop_Loss'] = np.nan
+df['Take_Profit'] = np.nan
+df['Position'] = 0
+df['PnL'] = np.nan  
+
+entry_price = None
+stop_loss_price = None
+take_profit_price = None
+in_position = False
+position_type = None 
+
+i = 0  
+while i < len(df):
+    if not in_position:
+        # Buy Signal: Complete candle is above 50 EMA and other conditions are met
+        if (
+            df['Close'].iloc[i] > df['EMA_50'].iloc[i] and 
+            df['Low'].iloc[i] > df['EMA_50'].iloc[i] and 
+            df['EMA_50'].iloc[i] > df['EMA_200'].iloc[i]  # Ensure the whole candle is above EMA 50
+        ):
+            df.at[i, 'Signal'] = 1
+            df.at[i, 'Entry'] = df['Close'].iloc[i]
+            df.at[i, 'Position'] = 1
+            entry_price = df['Close'].iloc[i]
+            position_type = 'long'
+            
+            # Calculate stop-loss price and take-profit price for long position
+            ema_50 = df['EMA_50'].iloc[i]
+            ema_200 = df['EMA_200'].iloc[i]
+            stop_loss_price = entry_price - (ema_50 - ema_200)  # Stop-Loss for long position
+            take_profit_price = entry_price + 3 * (ema_50 - ema_200)  # Take-Profit for long position
+            
+            df.at[i, 'Stop_Loss'] = stop_loss_price
+            df.at[i, 'Take_Profit'] = take_profit_price
+            print(f"Long Entry at index {i}: Entry Price = {entry_price}, Stop-Loss Price = {stop_loss_price}, Take-Profit Price = {take_profit_price}")
+            in_position = True
+
+        # Sell Signal: Complete candle is below 50 EMA and other conditions are met
+        elif (
+            df['Close'].iloc[i] < df['EMA_50'].iloc[i] and
+            df['High'].iloc[i] < df['EMA_50'].iloc[i] and 
+            df['EMA_50'].iloc[i] < df['EMA_200'].iloc[i]  # Ensure the whole candle is below EMA 50
+        ):
+            df.at[i, 'Signal'] = -1
+            df.at[i, 'Entry'] = df['Close'].iloc[i]
+            df.at[i, 'Position'] = -1
+            entry_price = df['Close'].iloc[i]
+            position_type = 'short'
+            
+            # Calculate stop-loss price and take-profit price for short position
+            ema_50 = df['EMA_50'].iloc[i]
+            ema_200 = df['EMA_200'].iloc[i]
+            stop_loss_price = entry_price + (ema_50 - ema_200)  # Stop-Loss for short position
+            take_profit_price = entry_price - 3 * (ema_50 - ema_200)  # Take-Profit for short position
+            
+            df.at[i, 'Stop_Loss'] = stop_loss_price
+            df.at[i, 'Take_Profit'] = take_profit_price
+            print(f"Short Entry at index {i}: Entry Price = {entry_price}, Stop-Loss Price = {stop_loss_price}, Take-Profit Price = {take_profit_price}")
+            in_position = True
+
+    else:
+        # If in position, check for exit conditions
+        j = i + 1
+        while j < len(df):
+            candle_low = df['Low'].iloc[j]
+            candle_high = df['High'].iloc[j]
+
+            if position_type == 'long':
+                # Exit conditions for long position
+                if candle_low <= stop_loss_price:
+                    df.at[j, 'Exit'] = stop_loss_price
+                    df.at[j, 'Signal'] = -1
+                    df.at[j, 'Position'] = 0
+                    df.at[j, 'PnL'] = stop_loss_price - entry_price  # Calculate PnL for long trade
+                    print(f"Long Exit at index {j}: Exit Price = {stop_loss_price} (Stop-Loss Triggered)")
+                    in_position = False
+                    i = j  # Move the main loop to the point where the exit happened
+                    break
+
+                if candle_high >= take_profit_price:
+                    df.at[j, 'Exit'] = take_profit_price
+                    df.at[j, 'Signal'] = -1
+                    df.at[j, 'Position'] = 0
+                    df.at[j, 'PnL'] = take_profit_price - entry_price  # Calculate PnL for long trade
+                    print(f"Long Exit at index {j}: Exit Price = {take_profit_price} (Take-Profit Triggered)")
+                    in_position = False
+                    i = j  # Move the main loop to the point where the exit happened
+                    break
+
+            elif position_type == 'short':
+                # Exit conditions for short position
+                if candle_high >= stop_loss_price:
+                    df.at[j, 'Exit'] = stop_loss_price
+                    df.at[j, 'Signal'] = 1
+                    df.at[j, 'Position'] = 0
+                    df.at[j, 'PnL'] = entry_price - stop_loss_price  # Calculate PnL for short trade
+                    print(f"Short Exit at index {j}: Exit Price = {stop_loss_price} (Stop-Loss Triggered)")
+                    in_position = False
+                    i = j  # Move the main loop to the point where the exit happened
+                    break
+
+                if candle_low <= take_profit_price:
+                    df.at[j, 'Exit'] = take_profit_price
+                    df.at[j, 'Signal'] = 1
+                    df.at[j, 'Position'] = 0
+                    df.at[j, 'PnL'] = entry_price - take_profit_price  # Calculate PnL for short trade
+                    print(f"Short Exit at index {j}: Exit Price = {take_profit_price} (Take-Profit Triggered)")
+                    in_position = False
+                    i = j  # Move the main loop to the point where the exit happened
+                    break
+
+            j += 1  # Move to the next candle to check for stop-loss or take-profit
+    
+    i += 1  # Move to the next candle to look for a new trade if no position is open
+
+# Handle the case where the position is still open at the end of the data
+if in_position:
+    if position_type == 'long':
+        df.at[len(df)-1, 'Exit'] = df['Close'].iloc[-1]
+        df.at[len(df)-1, 'Signal'] = -1
+        df.at[len(df)-1, 'Position'] = 0
+        df.at[len(df)-1, 'PnL'] = df['Close'].iloc[-1] - entry_price  # Calculate PnL for the last long trade
+        print(f"End of data (Long): Exit Price = {df['Close'].iloc[-1]}")
+
+    elif position_type == 'short':
+        df.at[len(df)-1, 'Exit'] = df['Close'].iloc[-1]
+        df.at[len(df)-1, 'Signal'] = 1
+        df.at[len(df)-1, 'Position'] = 0
+        df.at[len(df)-1, 'PnL'] = entry_price - df['Close'].iloc[-1]  # Calculate PnL for the last short trade
+        print(f"End of data (Short): Exit Price = {df['Close'].iloc[-1]}")
+
+# Print the result
+print(df)
+
+
+df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
